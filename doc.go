@@ -28,6 +28,14 @@
 //		fmt.Println(label)
 //	}
 //
+// # Performance
+//
+// Operators are fused into their source: values pass from one operator to
+// the next by direct calls, and a pipeline takes at most one lock per value,
+// however many operators it has. [Observable.All] hands each value from the
+// source's goroutine to the loop, which costs more; prefer
+// [Observable.Collect] or [Observable.Subscribe] for high-throughput streams.
+//
 // # Delivery guarantees
 //
 // Subscribe runs synchronous sources, such as Just, on the calling goroutine
