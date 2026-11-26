@@ -38,7 +38,7 @@ For data that is already in memory, a slice and a loop, or [coll](https://github
 go get github.com/luminyra/rx
 ```
 
-rx requires Go 1.27 or later and has no dependencies.
+rx requires Go 1.27 or later. Its only dependency is [conc](https://github.com/luminyra/conc), another Luminyra library with no dependencies.
 
 ## Getting started
 
@@ -183,6 +183,26 @@ lines := rx.New(func(ctx context.Context, e rx.Emitter[string]) func() {
 })
 ```
 
+A producer that emits from its own goroutine starts it with `rx.Go(ctx, fn)` instead of a `go` statement, so a panic downstream reaches the consumer instead of crashing the program:
+
+```go
+ticks := rx.New(func(ctx context.Context, e rx.Emitter[time.Time]) func() {
+	ticker := time.NewTicker(time.Second)
+	rx.Go(ctx, func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case t := <-ticker.C:
+				e.Next(t)
+			}
+		}
+	})
+	return nil
+})
+```
+
 ## How it works
 
 - An `Observable` is a value that describes a stream. Subscribing runs its producer; operators return new Observables.
@@ -190,6 +210,7 @@ lines := rx.New(func(ctx context.Context, e rx.Emitter[string]) func() {
 - Events to one observer are serialized. After `Complete`, `Error`, `Unsubscribe` or the end of the context, nothing more is delivered, even if a producer misbehaves.
 - `All` runs the subscription on a goroutine and hands values over one at a time; the source waits for your loop body before producing the next value.
 - Callbacks must not unsubscribe their own subscription and then wait for it to finish.
+- A panic in a stream reaches whoever waits for it. `Collect`, the loop over `All` and `Unsubscribe` re-panic with a `conc.Panic` that holds the original value and stack, after the subscription has ended and every teardown has run, even when the panic happened on another goroutine: one started by `Interval`, `FromChannel` or `rx.Go`, or the one that runs teardowns. A `runtime.Goexit` there ends the stream with an error matching `conc.ErrGoexit`. With a plain `Subscribe` nobody waits, so such a panic crashes the program like any unrecovered panic, and a synchronous source's panic simply continues on your goroutine, as any function call's would.
 
 ## Performance
 
@@ -212,7 +233,7 @@ Operators are fused into their source: a pipeline takes one lock per value, howe
 | Sources | `Just`, `Range`, `FromSeq`, `FromChannel`, `Interval`, `Empty`, `Fail`, `New` |
 | Operators | `Map`, `Filter`, `Tap`, `Take`, `Skip`, `Scan`, `Reduce`, `MergeWith`, `Merge` |
 | Consume | `All`, `Collect`, `Subscribe`, `Observer`, `Subscription` |
-| Write sources | `New`, `Producer`, `Emitter` |
+| Write sources | `New`, `Producer`, `Emitter`, `Go` |
 
 The full reference with runnable examples is on [pkg.go.dev](https://pkg.go.dev/github.com/luminyra/rx). Complete programs live in [`examples/`](examples): [`pipeline`](examples/pipeline/main.go) and [`async`](examples/async/main.go).
 

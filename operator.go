@@ -2,6 +2,7 @@ package rx
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 )
@@ -158,8 +159,10 @@ func Merge[T any](sources ...Observable[T]) Observable[T] {
 		return func() {
 			mu.Lock()
 			defer mu.Unlock()
-			for _, sub := range subs {
-				sub.Unsubscribe()
+			// Deferred, so every source is unsubscribed even if a teardown
+			// panics.
+			for _, sub := range slices.Backward(subs) {
+				defer sub.Unsubscribe()
 			}
 		}
 	})

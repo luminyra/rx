@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/luminyra/conc"
 	"github.com/luminyra/rx"
 )
 
@@ -46,6 +47,30 @@ func ExampleMerge() {
 	_, err := rx.Merge(rx.Just(1, 2), rx.Fail[int](errors.New("upstream down"))).Collect(context.Background())
 	fmt.Println(err)
 	// Output: upstream down
+}
+
+func ExampleGo() {
+	ticks := rx.New(func(ctx context.Context, e rx.Emitter[int]) func() {
+		rx.Go(ctx, func() { // instead of a go statement
+			for i := 1; i <= 3; i++ {
+				e.Next(i)
+			}
+			e.Complete()
+		})
+		return nil
+	})
+	bug := ticks.Map(func(n int) int {
+		if n == 2 {
+			panic("bug in Map")
+		}
+		return n
+	})
+	defer func() {
+		p := recover().(conc.Panic) // raised on this goroutine, not on the producer's
+		fmt.Println("recovered:", p.Value)
+	}()
+	_, _ = bug.Collect(context.Background())
+	// Output: recovered: bug in Map
 }
 
 func ExampleNew() {

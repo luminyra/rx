@@ -45,5 +45,15 @@
 // [Subscription.Unsubscribe], or after the subscription context is done.
 // Callbacks must not unsubscribe their own subscription and then wait for it.
 //
+// # Panics
+//
+// A panic in a stream reaches whoever waits for it. [Observable.Collect],
+// the loop over [Observable.All] and [Subscription.Unsubscribe] re-panic with
+// a [conc.Panic] holding the original value and stack once the subscription
+// has ended, even when the panic happened on another goroutine. A
+// [runtime.Goexit] there ends the stream with an error matching
+// [conc.ErrGoexit]. A producer that emits from its own goroutine starts it
+// with [Go] to get the same guarantees.
+//
 // The package is inspired by ReactiveX (RxJava, RxJS) and samber/ro.
 package rx

@@ -55,7 +55,7 @@ func Fail[T any](err error) Observable[T] {
 // It runs on its own goroutine.
 func FromChannel[T any](ch <-chan T) Observable[T] {
 	return New(func(ctx context.Context, e Emitter[T]) func() {
-		go func() {
+		Go(ctx, func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -68,7 +68,7 @@ func FromChannel[T any](ch <-chan T) Observable[T] {
 					e.Next(v)
 				}
 			}
-		}()
+		})
 		return nil
 	})
 }
@@ -82,7 +82,7 @@ func Interval(period time.Duration) Observable[int] {
 	}
 	return New(func(ctx context.Context, e Emitter[int]) func() {
 		ticker := time.NewTicker(period)
-		go func() {
+		Go(ctx, func() {
 			defer ticker.Stop()
 			for i := 0; ; i++ {
 				select {
@@ -92,7 +92,7 @@ func Interval(period time.Duration) Observable[int] {
 					e.Next(i)
 				}
 			}
-		}()
+		})
 		return nil
 	})
 }

@@ -2,8 +2,11 @@ package rx
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
+
+	"github.com/luminyra/conc"
 )
 
 // Emitter receives the events that a Producer emits: zero or more values,
@@ -52,35 +55,76 @@ func New[T any](produce Producer[T]) Observable[T] {
 
 // Subscribe starts delivering events to obs until a terminal event,
 // Unsubscribe, or the end of ctx. Synchronous sources such as Just run on the
-// calling goroutine, so Subscribe returns after they finish.
+// calling goroutine, so Subscribe returns after they finish; if they panic,
+// the subscription is cleaned up and the panic continues on that goroutine.
+//
+// A panic or [runtime.Goexit] on a goroutine that rx runs for the stream,
+// such as the goroutine of [Interval] or [FromChannel], or in a teardown
+// function, ends the subscription. [Observable.Collect] and [Observable.All]
+// raise such a panic on the consumer's goroutine, and so does
+// [Subscription.Unsubscribe] while it runs. Otherwise nobody waits for the
+// outcome, so the panic is raised again on the goroutine where it happened,
+// and a Goexit just ends the subscription without a terminal event.
 func (o Observable[T]) Subscribe(ctx context.Context, obs Observer[T]) *Subscription {
 	ctx, cancel := context.WithCancel(ctx)
-	sub := &Subscription{cancel: cancel, done: make(chan struct{})}
+	f := faultOf(ctx)
+	isRoot := f == nil
+	if isRoot {
+		f = &fault{cancel: cancel}
+		ctx = withFault(ctx, f)
+	}
+	sub := &Subscription{cancel: cancel, done: make(chan struct{}), fault: f, ownsFault: isRoot}
 	s := &subscriber[T]{sub: sub, obs: obs}
-	stop := context.AfterFunc(ctx, sub.Unsubscribe)
+	stop := context.AfterFunc(ctx, sub.shutdown)
 	sub.addTeardown(func() { stop() })
 	if o.run == nil {
 		s.Complete()
 		return sub
 	}
+	returned := false
+	defer func() {
+		if !returned { // the source panicked or called runtime.Goexit
+			sub.shutdown()
+		}
+	}()
 	sub.addTeardown(o.run(ctx, s))
+	returned = true
 	return sub
 }
 
 // Subscription controls a running subscription.
 type Subscription struct {
-	cancel   context.CancelFunc
-	isClosed atomic.Bool
-	once     sync.Once
-	done     chan struct{}
+	cancel    context.CancelFunc
+	fault     *fault // where failures of the stream are reported
+	ownsFault bool   // the subscription is the root of a plain Subscribe
+	isClosed  atomic.Bool
+	once      sync.Once
+	done      chan struct{}
 
 	mu        sync.Mutex
 	teardowns []func()
 }
 
-// Unsubscribe stops delivery and runs the teardown functions. It is
-// idempotent.
+// Unsubscribe stops delivery, runs the teardown functions and returns once
+// the subscription has ended. It is idempotent. Every teardown runs even if
+// one of them panics, and Unsubscribe then re-panics with a [conc.Panic]
+// holding the original value and stack.
 func (s *Subscription) Unsubscribe() {
+	if !s.ownsFault { // nested in a stream whose consumer sees its failures
+		s.shutdown()
+		return
+	}
+	s.fault.watch()
+	s.shutdown()
+	if p, _ := s.fault.take(); p != nil {
+		panic(*p)
+	}
+}
+
+// shutdown ends the subscription once and reports a panic or runtime.Goexit
+// in a teardown to the stream's fault before Done is closed. Concurrent
+// callers wait until the first one has finished.
+func (s *Subscription) shutdown() {
 	s.once.Do(func() {
 		s.isClosed.Store(true)
 		s.cancel()
@@ -88,11 +132,20 @@ func (s *Subscription) Unsubscribe() {
 		tds := s.teardowns
 		s.teardowns = nil
 		s.mu.Unlock()
-		for _, td := range tds {
-			td()
-		}
-		close(s.done)
+		defer close(s.done)
+		conc.Run(func() error {
+			runAll(tds)
+			return nil
+		}, s.fault.report)
 	})
+}
+
+// runAll calls fns in order. Each call is deferred, so the rest still run
+// when one of them panics or calls runtime.Goexit.
+func runAll(fns []func()) {
+	for _, fn := range slices.Backward(fns) {
+		defer fn()
+	}
 }
 
 // end stops the subscription after a terminal event. It only cancels the
