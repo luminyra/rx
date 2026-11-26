@@ -15,7 +15,7 @@ func Just[T any](values ...T) Observable[T] {
 // FromSeq emits the values of seq, then completes. seq runs once per
 // subscription and stops early when the subscription ends.
 func FromSeq[T any](seq iter.Seq[T]) Observable[T] {
-	return New(func(ctx context.Context, e Emitter[T]) func() {
+	return newSerial(func(ctx context.Context, e Emitter[T]) func() {
 		for v := range seq {
 			if ctx.Err() != nil {
 				return nil

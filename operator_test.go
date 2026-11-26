@@ -1,6 +1,7 @@
 package rx
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strconv"
@@ -76,5 +77,71 @@ func TestMerge(t *testing.T) {
 	}
 	if got := collect(t, Merge[int]()); len(got) != 0 {
 		t.Errorf("Merge() = %v", got)
+	}
+}
+
+var sinkInts []int
+
+// BenchmarkPipeline1000 pushes 1000 values through Filter, Map and Collect;
+// the loop variant computes the same result directly.
+func BenchmarkPipeline1000(b *testing.B) {
+	isEven := func(n int) bool { return n%2 == 0 }
+	square := func(n int) int { return n * n }
+	b.Run("loop", func(b *testing.B) {
+		for b.Loop() {
+			var out []int
+			for n := range 1000 {
+				if isEven(n) {
+					out = append(out, square(n))
+				}
+			}
+			sinkInts = out
+		}
+	})
+	b.Run("Collect", func(b *testing.B) {
+		ctx := b.Context()
+		for b.Loop() {
+			sinkInts, _ = Range(0, 1000).Filter(isEven).Map(square).Collect(ctx)
+		}
+	})
+	b.Run("All", func(b *testing.B) {
+		ctx := b.Context()
+		for b.Loop() {
+			var out []int
+			for v := range Range(0, 1000).Filter(isEven).Map(square).All(ctx) {
+				out = append(out, v)
+			}
+			sinkInts = out
+		}
+	})
+}
+
+func TestOperatorsOnEmptyAndFailedSources(t *testing.T) {
+	sum := func(acc, v int) int { return acc + v }
+	if got := collect(t, Empty[int]().Reduce(5, sum)); !slices.Equal(got, []int{5}) {
+		t.Errorf("Reduce on Empty = %v, want the seed", got)
+	}
+	if got := collect(t, New[int](nil).Map(strconv.Itoa)); len(got) != 0 {
+		t.Errorf("Map on New(nil) = %v", got)
+	}
+	boom := errors.New("boom")
+	if _, err := Fail[int](boom).Filter(func(int) bool { return true }).Map(strconv.Itoa).Collect(t.Context()); !errors.Is(err, boom) {
+		t.Errorf("error through operators = %v", err)
+	}
+}
+
+func TestSerialSourceError(t *testing.T) {
+	boom := errors.New("boom")
+	src := newSerial(func(_ context.Context, e Emitter[int]) func() {
+		e.Next(1)
+		e.Error(boom)
+		e.Next(2)     // dropped after the terminal event
+		e.Error(boom) // dropped
+		e.Complete()  // dropped
+		return nil
+	})
+	got, err := src.Collect(t.Context())
+	if !slices.Equal(got, []int{1}) || !errors.Is(err, boom) {
+		t.Fatalf("Collect = %v, %v", got, err)
 	}
 }

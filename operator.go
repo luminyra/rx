@@ -6,12 +6,18 @@ import (
 	"sync/atomic"
 )
 
-// lift builds an Observable whose subscription subscribes to src with the
-// Observer that op builds from the downstream Emitter.
+// lift builds an Observable that runs src with the callbacks op builds from
+// the downstream Emitter. The operator is fused into the source: it adds no
+// subscription, goroutine or lock, and runs under the source's guard.
 func lift[T, R any](src Observable[T], op func(dst Emitter[R]) Observer[T]) Observable[R] {
-	return New(func(ctx context.Context, dst Emitter[R]) func() {
-		return src.Subscribe(ctx, op(dst)).Unsubscribe
-	})
+	return Observable[R]{run: func(ctx context.Context, dst Emitter[R]) func() {
+		obs := op(dst)
+		if src.run == nil { // an empty source completes at once
+			emitter[T]{obs}.Complete()
+			return nil
+		}
+		return src.run(ctx, emitter[T]{obs})
+	}}
 }
 
 // Map transforms every value with f. The result type may differ from T.

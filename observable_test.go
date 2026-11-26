@@ -5,8 +5,10 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 )
 
 func collect[T any](t *testing.T, source Observable[T]) []T {
@@ -57,4 +59,24 @@ func TestTeardownRunsOnUnsubscribe(t *testing.T) {
 	if !isTorn.Load() {
 		t.Fatal("teardown did not run")
 	}
+}
+
+// TestTeardownMayWaitForProducer covers a producer whose teardown waits for
+// its goroutine to exit while that goroutine is blocked emitting a value.
+func TestTeardownMayWaitForProducer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		src := New(func(ctx context.Context, e Emitter[int]) func() {
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				for i := 0; ctx.Err() == nil; i++ {
+					e.Next(i)
+				}
+			})
+			return wg.Wait
+		})
+		got, err := src.Take(3).Collect(t.Context())
+		if err != nil || !slices.Equal(got, []int{0, 1, 2}) {
+			t.Fatalf("Collect = %v, %v", got, err)
+		}
+	})
 }
