@@ -3,7 +3,6 @@ package rx
 import (
 	"context"
 	"slices"
-	"sync"
 	"sync/atomic"
 )
 
@@ -137,7 +136,8 @@ func Merge[T any](sources ...Observable[T]) Observable[T] {
 	return New(func(ctx context.Context, dst Emitter[T]) func() {
 		var remaining atomic.Int32
 		remaining.Store(int32(len(sources)))
-		var mu sync.Mutex
+		// subs needs no lock: only this loop writes it, and the teardown that
+		// reads it is registered after the producer returns.
 		subs := make([]*Subscription, 0, len(sources))
 		for _, src := range sources {
 			if ctx.Err() != nil {
@@ -152,13 +152,9 @@ func Merge[T any](sources ...Observable[T]) Observable[T] {
 					}
 				},
 			})
-			mu.Lock()
 			subs = append(subs, sub)
-			mu.Unlock()
 		}
 		return func() {
-			mu.Lock()
-			defer mu.Unlock()
 			// Deferred, so every source is unsubscribed even if a teardown
 			// panics.
 			for _, sub := range slices.Backward(subs) {
