@@ -48,6 +48,11 @@ func (f *fault) report(err error, p *conc.Panic) {
 	if err == nil && p == nil {
 		return
 	}
+	if p != nil {
+		if inner, ok := p.Value.(conc.Panic); ok {
+			p = &inner // already carried across a goroutine, such as by resil.Hedge
+		}
+	}
 	isWatched := false
 	if f != nil {
 		f.mu.Lock()

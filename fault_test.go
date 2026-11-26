@@ -299,3 +299,13 @@ func TestCollectReportsCause(t *testing.T) {
 		}
 	}
 }
+
+func TestNestedConcPanicIsNotWrappedTwice(t *testing.T) {
+	inner := conc.Panic{Value: "deep bug", Stack: "original stack"}
+	got := catchPanic(func() {
+		_, _ = Just(1).Map(func(int) int { panic(inner) }).Collect(t.Context())
+	})
+	if got != inner {
+		t.Fatalf("panic = %#v, want the inner conc.Panic unchanged", got)
+	}
+}
