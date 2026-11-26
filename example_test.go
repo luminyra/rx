@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/luminyra/conc"
 	"github.com/luminyra/rx"
@@ -47,6 +48,16 @@ func ExampleMerge() {
 	_, err := rx.Merge(rx.Just(1, 2), rx.Fail[int](errors.New("upstream down"))).Collect(context.Background())
 	fmt.Println(err)
 	// Output: upstream down
+}
+
+func ExampleObservable_MapAsyncOrdered() {
+	lookup := func(ctx context.Context, id int) (string, error) {
+		time.Sleep(time.Duration(4-id) * time.Millisecond) // later ids answer sooner
+		return "user-" + strconv.Itoa(id), nil
+	}
+	names, err := rx.Just(1, 2, 3).MapAsyncOrdered(3, lookup).Collect(context.Background())
+	fmt.Println(names, err)
+	// Output: [user-1 user-2 user-3] <nil>
 }
 
 func ExampleGo() {

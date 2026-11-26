@@ -11,6 +11,10 @@
 //
 //	labels := rx.Range(1, 20).Filter(isEven).Map(strconv.Itoa).Take(4)
 //
+// [Observable.MapAsync] and [Observable.MapAsyncOrdered] run a slow
+// transformation, such as a call to another service, on a bounded number of
+// goroutines, holding back the source while they are all busy.
+//
 // Sources include [Just], [Range], [FromSeq], [FromChannel], [Interval],
 // [Empty], [Fail] and [Merge]; [New] builds a custom source from a
 // [Producer] that emits through an [Emitter].

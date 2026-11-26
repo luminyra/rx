@@ -118,6 +118,16 @@ alerts := readings.
 
 `Skip(n)` drops the first values, and `Tap(fn)` observes values without changing them, which is handy for logging.
 
+### Call a slow service for every value
+
+`MapAsync(limit, f)` runs `f` on up to `limit` goroutines at once and emits the results as they finish; `MapAsyncOrdered` keeps the source order. While `limit` calls are running, the source waits, so a fast source cannot pile up work. The first error fails the stream and cancels the context of the other calls:
+
+```go
+profiles := userIDs.MapAsync(8, func(ctx context.Context, id int) (Profile, error) {
+	return client.FetchProfile(ctx, id)
+})
+```
+
 ### Keep a running result
 
 ```go
@@ -208,6 +218,7 @@ ticks := rx.New(func(ctx context.Context, e rx.Emitter[time.Time]) func() {
 - An `Observable` is a value that describes a stream. Subscribing runs its producer; operators return new Observables.
 - Synchronous sources such as `Just`, `Range` and `FromSeq` run on the subscribing goroutine, so `Subscribe` returns once they finish. Asynchronous sources such as `Interval` and `FromChannel` run on their own goroutine.
 - Events to one observer are serialized. After `Complete`, `Error`, `Unsubscribe` or the end of the context, nothing more is delivered, even if a producer misbehaves.
+- `MapAsync` admits a value only when one of its `limit` slots is free; `MapAsyncOrdered` frees a slot only when the result has been emitted in order, so results held back by a slow value never exceed `limit`. The calls run on goroutines started with `rx.Go`, and the stream completes once the source has completed and every result has been emitted.
 - `All` runs the subscription on a goroutine and hands values over one at a time; the source waits for your loop body before producing the next value.
 - Callbacks must not unsubscribe their own subscription and then wait for it to finish.
 - A panic in a stream reaches whoever waits for it. `Collect`, the loop over `All` and `Unsubscribe` re-panic with a `conc.Panic` that holds the original value and stack, after the subscription has ended and every teardown has run, even when the panic happened on another goroutine: one started by `Interval`, `FromChannel` or `rx.Go`, or the one that runs teardowns. A `runtime.Goexit` there ends the stream with an error matching `conc.ErrGoexit`. With a plain `Subscribe` nobody waits, so such a panic crashes the program like any unrecovered panic, and a synchronous source's panic simply continues on your goroutine, as any function call's would.
@@ -231,7 +242,7 @@ Operators are fused into their source: a pipeline takes one lock per value, howe
 | Task | API |
 | --- | --- |
 | Sources | `Just`, `Range`, `FromSeq`, `FromChannel`, `Interval`, `Empty`, `Fail`, `New` |
-| Operators | `Map`, `Filter`, `Tap`, `Take`, `Skip`, `Scan`, `Reduce`, `MergeWith`, `Merge` |
+| Operators | `Map`, `MapAsync`, `MapAsyncOrdered`, `Filter`, `Tap`, `Take`, `Skip`, `Scan`, `Reduce`, `MergeWith`, `Merge` |
 | Consume | `All`, `Collect`, `Subscribe`, `Observer`, `Subscription` |
 | Write sources | `New`, `Producer`, `Emitter`, `Go` |
 
